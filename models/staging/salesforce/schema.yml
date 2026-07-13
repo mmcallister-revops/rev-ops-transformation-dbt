@@ -1,0 +1,60 @@
+version: 1
+
+models:
+
+  - name: stg_deal_registration
+    description: >
+      Staging model over bronze_salesforce.deal_registration__c.
+      Thin rename + boolean normalisation layer. No deduplication.
+      Represents legacy deal registrations (pre-Vartopia June 2024 go-live).
+    columns:
+      - name: deal_registration_id
+        description: Salesforce record ID. Primary key.
+        tests:
+          - not_null
+          - unique
+      - name: opportunity_id
+        description: Linked Salesforce Opportunity ID. May be NULL for unqualified regs.
+      - name: is_deleted
+        description: TRUE if the record has been soft-deleted in Salesforce.
+        tests:
+          - not_null
+      - name: is_clone
+        description: TRUE if this registration was cloned from another.
+      - name: partner_account_id
+        description: Reseller / partner account linked to this deal registration.
+
+  - name: stg_vartopia_deal_registration
+    description: >
+      Staging model over bronze_salesforce.salesforce_vartopiadrs__registration__c.
+      Thin rename + boolean normalisation layer. No deduplication.
+      Computes migrated_to_vartopia and is_native_vartopia_registration flags
+      via a LEFT JOIN to stg_deal_registration on opportunity_id.
+    columns:
+      - name: vartopia_registration_id
+        description: Salesforce record ID for the Vartopia registration. Primary key.
+        tests:
+          - not_null
+          - unique
+      - name: opportunity_id
+        description: Linked Salesforce Opportunity ID.
+      - name: migrated_to_vartopia
+        description: >
+          TRUE when opportunity_id matches a live record in stg_deal_registration.
+          Indicates this Vartopia registration corresponds to a legacy deal registration.
+        tests:
+          - not_null
+      - name: is_native_vartopia_registration
+        description: >
+          TRUE when no matching deal registration exists — genuine post-June 2024
+          Vartopia registration. Inverse of migrated_to_vartopia.
+        tests:
+          - not_null
+      - name: is_deleted
+        description: TRUE if the record has been soft-deleted in Salesforce.
+        tests:
+          - not_null
+      - name: vartopia_sf_registration_id
+        description: >
+          Vartopia's own registration ID (vartopiadrs__vartopia_registration_id__c).
+          NULL for records not yet synced to Vartopia.

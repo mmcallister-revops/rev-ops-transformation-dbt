@@ -1,0 +1,92 @@
+version: 1
+
+sources:
+  - name: bronze_salesforce
+    description: >
+      Raw Salesforce data landed by Fivetran into the bronze layer.
+      All tables are external tables pointing at the Redshift share
+      (pre-Perceptor migration) or Unity Catalog external locations
+      (post-Perceptor). Do not reference these directly in gold models —
+      always go through a staging model.
+    database: "{{ env_var('DBT_CATALOG', 'your_dev_catalog') }}"
+    schema: bronze_salesforce
+    tags: ["bronze", "salesforce"]
+
+    tables:
+
+      - name: deal_registration__c
+        description: >
+          Legacy deal registration object. Pre-Vartopia rollout records.
+          Post-June 2024, new deal registrations go through
+          salesforce_vartopiadrs__registration__c instead.
+        columns:
+          - name: id
+            description: Salesforce record ID (15-char). Primary key.
+            tests:
+              - not_null
+              - unique
+
+      - name: salesforce_vartopiadrs__registration__c
+        description: >
+          Vartopia deal registration object (managed package).
+          Source for stg_vartopia_deal_registration.
+          Native Vartopia registrations (post-June 2024 go-live) will NOT
+          have a matching record in deal_registration__c.
+        columns:
+          - name: id
+            description: Salesforce record ID. Primary key.
+            tests:
+              - not_null
+              - unique
+
+      - name: opportunity
+        description: Salesforce Opportunity object (SCD2 via Fivetran history mode).
+        columns:
+          - name: opportunity_id
+            tests:
+              - not_null
+
+      - name: opportunity_field_history
+        description: Salesforce OpportunityFieldHistory — one row per field change.
+
+      - name: user
+        description: Salesforce User object (SCD2).
+
+      - name: userrole
+        description: Salesforce UserRole lookup.
+
+      - name: profile
+        description: Salesforce Profile lookup.
+
+      - name: recordtype
+        description: Salesforce RecordType lookup (all objects).
+
+      - name: product2
+        description: Salesforce Product2 object (SCD2).
+
+      - name: quote
+        description: RCA (legacy) Quote object.
+
+      - name: sbqq__quote__c
+        description: Salesforce CPQ Quote object (SCD2).
+
+      - name: productsellingmodel
+        description: Salesforce ProductSellingModel lookup.
+
+      - name: productsellingmodeloption
+        description: Links product2 to selling model.
+
+      - name: dim_address
+        description: Address dimension from Salesforce billing/shipping data.
+
+      - name: dim_account
+        description: Account dimension (SCD2).
+
+      - name: dim_task
+        description: Task dimension with resolved opportunity linkage.
+
+      - name: dim_vc_value_proposition
+        description: Value proposition records linked to opportunities (BVA tracking).
+
+      - name: fct_quote_line_unified
+        description: Unified quote line fact (RCA + CPQ).

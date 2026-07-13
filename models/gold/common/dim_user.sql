@@ -1,6 +1,6 @@
 {{ config(
     materialized = 'table',
-    schema       = 'sales'
+    tags         = ['gold', 'common', 'dimension', 'salesforce']
 ) }}
 
 -- ============================================================
@@ -23,7 +23,7 @@ WITH base_user AS (
         u.is_active,
         -- is_infoblox_employee domain rule lifted into a macro so the
         -- same logic is enforceable anywhere it's needed, not re-written.
-        {{ is_internal_domain('u.email') }} AS is_infoblox_employee,
+        {{ is_user_internal_domain('u.email') }} AS is_infoblox_employee,
         u.last_modified_date,
         INITCAP(LOWER(NULLIF(TRIM(u.last_name), ''))) AS last_name,
         NULLIF(TRIM(u.manager_id), '')     AS manager_id,
