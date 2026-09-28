@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: dim_opportunity
+    description: "Gold dimension for Salesforce Opportunities (current SCD2 version only).
+      Enriched with owner attributes from dim_user, stage group mapping,
+      close date history metrics, and BVA task coverage flags."
+    config:
+      tags: ["gold", "common", "salesforce", "opportunity"]
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      source_systems: "Salesforce CRM (bronze_salesforce.opportunity)"
+      refresh_cadence: "Daily"
+
+    columns:
+      - name: opportunity_id
+        description: "Salesforce Opportunity ID. Primary key."
+        tests:
+          - not_null
+          - unique
+
+      - name: is_current
+        description: "Always TRUE in this model — filtered to the current SCD2 row
+          in the WHERE clause of the upstream model."
+
+      - name: closed_lost_exclusion_flag
+        description: "TRUE when a Closed Lost opportunity is excluded from reporting
+          (duplicate, unqualified, or pre-qualify stage at close)."
+
+      - name: revops_reporting_exclusion_flag
+        description: "TRUE when win/loss reason indicates co-term or duplicate.
+          Excluded from RevOps pipeline reporting."
+
+      - name: has_bva_task_without_bva_record
+        description: "BVA QA flag. TRUE when a BVA task has been logged against the
+          opportunity but no corresponding value proposition record exists
+          in dim_vc_value_proposition."
+
+      - name: migrated_to_vartopia
+        description: "Not present in this model. See dim_vartopia_deal_registration
+          for Vartopia classification flags on deal registrations linked
+          to opportunities."

@@ -1,0 +1,449 @@
+version: 1
+
+models:
+  - name: dim_deal_registration
+    description: >
+      Gold Common dimension for legacy Salesforce deal registrations sourced from
+      stg_deal_registration. Soft-deleted source records are excluded before publication.
+      The model enriches registrations with account, contact and user dimensions.
+      One row is expected per deal_registration_id.
+
+    config:
+      tags: ["gold", "common", "deal_registration"]
+
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      data_sensitivity: "Confidential"
+      contains_pii: true
+      pii_fields: >
+        champion_contact_email, champion_contact_first_name,
+        champion_contact_last_name, champion_contact_phone,
+        lead_owner_email, infoblox_contact_name,
+        distributor_rep_name, partner_sales_rep_name
+      source_systems: >
+        Salesforce CRM (deal_registration__c), enriched with
+        dim_account, dim_contact and dim_user
+      refresh_cadence: "Daily"
+
+    tests:
+
+      - dbt_utils.expression_is_true:
+          name: legacy_dr_denial_reason_only_on_declined_records
+          expression: >
+            denial_reason IS NULL
+            OR registration_status IN (
+              'Denied', 'Rejected', 'Declined', 'Deny', 'Reject'
+            )
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+      - dbt_utils.expression_is_true:
+          name: legacy_dr_am_not_both_approved_and_rejected
+          expression: >
+            NOT (
+              COALESCE(am_approved, FALSE) = TRUE
+              AND COALESCE(am_rejected, FALSE) = TRUE
+            )
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+      - dbt_utils.expression_is_true:
+          name: legacy_dr_created_before_last_modified
+          expression: >
+            created_date IS NULL
+            OR last_modified_date IS NULL
+            OR created_date <= last_modified_date
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+    columns:
+
+      - name: deal_registration_id
+        description: >
+          Primary Salesforce record identifier for the legacy deal registration.
+          Defines the grain of the model: one row per deal_registration_id.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+          - unique:
+              config:
+                severity: error
+                tags: ["dq", "uniqueness", "dq_blocking"]
+
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_id_valid_sfdc_length
+              expression: "length(trim(deal_registration_id)) in (15, 18)"
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: channel_account_manager_id
+        description: Salesforce User ID of the channel account manager.
+
+      - name: created_by_id
+        description: Salesforce User ID of the user who created the deal registration.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: current_user_id
+        description: >
+          Current-user identifier from the legacy source, cast to STRING for
+          a stable downstream type.
+
+      - name: distributor_account_id
+        description: >
+          Salesforce Account ID of the distributor linked to the registration.
+          Null when no distributor is involved.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_distributor_account_id_valid_sfdc_length
+              expression: >
+                distributor_account_id IS NULL
+                OR length(trim(distributor_account_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: distributor_rep_id
+        description: Salesforce User ID of the distributor representative.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: infoblox_contact_id
+        description: Salesforce Contact ID of the associated Infoblox contact.
+        tests:
+          - relationships:
+              to: ref('dim_contact')
+              field: contact_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: last_modified_by_id
+        description: Salesforce User ID of the user who last modified the registration.
+
+      - name: lead_id
+        description: Salesforce Lead ID associated with the registration.
+
+      - name: opportunity_id
+        description: >
+          Salesforce Opportunity ID linked to the registration. Null where the
+          registration has not progressed to an opportunity.
+        tests:
+          - relationships:
+              to: ref('dim_opportunity')
+              field: opportunity_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_opportunity_id_valid_sfdc_length
+              expression: >
+                opportunity_id IS NULL
+                OR length(trim(opportunity_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: owner_id
+        description: Salesforce User ID of the deal-registration record owner.
+
+      - name: partner_account_id
+        description: >
+          Salesforce Account ID of the reseller or partner submitting the
+          deal registration.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_partner_account_id_valid_sfdc_length
+              expression: >
+                partner_account_id IS NULL
+                OR length(trim(partner_account_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: partner_sales_rep_id
+        description: Salesforce User ID of the partner sales representative.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: preferred_distributor_id
+        description: Salesforce identifier of the preferred distributor.
+
+      - name: rd_manager_for_approvals_id
+        description: Salesforce User ID of the RD manager used for approvals.
+
+      - name: x18_digit_deal_registration_id
+        description: 18-character Salesforce representation of the registration ID.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_x18_deal_registration_id_valid_length
+              expression: >
+                x18_digit_deal_registration_id IS NULL
+                OR length(trim(x18_digit_deal_registration_id)) = 18
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: x18_digit_owner_id
+        description: 18-character Salesforce representation of the owner ID.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_x18_owner_id_valid_length
+              expression: >
+                x18_digit_owner_id IS NULL
+                OR length(trim(x18_digit_owner_id)) = 18
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: add_teaming_partner
+        description: TRUE if a teaming partner was added.
+
+      - name: am_approved
+        description: TRUE when approved by the account-management approval step.
+
+      - name: am_rejected
+        description: TRUE when rejected by the account-management approval step.
+
+      - name: eligible_for_resubmission
+        description: TRUE if the registration is eligible for resubmission.
+
+      - name: is_clone
+        description: TRUE if this registration was cloned from another record.
+
+      - name: is_deleted
+        description: >
+          Source soft-delete flag. The model filters deleted records, therefore all
+          published rows must have is_deleted = FALSE.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+          - accepted_values:
+              values: [false]
+              name: legacy_dr_is_deleted_always_false
+              config:
+                severity: error
+                tags: ["dq", "validity", "dq_blocking"]
+
+      - name: is_resubmitted
+        description: TRUE if this registration is a resubmission.
+
+      - name: is_there_a_budget_defined
+        description: Indicates whether customer budget has been defined.
+
+      - name: partner_agrees_to_set_up_meeting
+        description: Indicates whether the partner agreed to arrange a meeting.
+
+      - name: partner_met_or_spoken_with_a_customer
+        description: Indicates whether the partner has engaged with the customer.
+
+      - name: reprocess_notifications_distributor
+        description: Source workflow flag for distributor notification reprocessing.
+
+      - name: registration_status
+        description: >
+          Unified registration status sourced from teaming_request_status.
+
+      - name: deal_registration_type
+        description: Legacy deal-registration type exposed under the unified field name.
+
+      - name: denial_reason
+        description: Reason the deal registration was declined or denied.
+
+      - name: partner_account_name
+        description: Resolved partner account name from dim_account.
+
+      - name: distributor_account_name
+        description: Resolved distributor account name from dim_account.
+
+      - name: distributor_rep_name
+        description: Resolved distributor representative name from dim_user.
+
+      - name: infoblox_contact_name
+        description: Resolved contact name from dim_contact.
+
+      - name: opportunity_owner_name
+        description: Resolved opportunity owner name from dim_user.
+
+      - name: opportunity_owner_rd_name
+        description: Resolved opportunity-owner RD name from dim_user.
+
+      - name: partner_sales_rep_name
+        description: Resolved partner sales representative name from dim_user.
+
+      - name: atgexternal_id
+        description: External ATG identifier.
+
+      - name: business_justification_for_decline
+        description: Business justification recorded on declined registrations.
+
+      - name: champion_business_title
+        description: Business title of the customer champion.
+
+      - name: champion_contact_email
+        description: Customer champion email, trimmed by the model.
+
+      - name: champion_contact_first_name
+        description: Normalised customer champion first name.
+
+      - name: champion_contact_last_name
+        description: Normalised customer champion last name.
+
+      - name: champion_contact_phone
+        description: Customer champion phone number.
+
+      - name: company
+        description: Company/end-customer name.
+
+      - name: currency_iso_code
+        description: ISO currency code.
+
+      - name: days_since_approval
+        description: Days elapsed since approval.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_days_since_approval_non_negative
+              expression: >
+                days_since_approval IS NULL
+                OR days_since_approval >= 0
+              config:
+                severity: warn
+                tags: ["dq", "accuracy", "dq_monthly"]
+
+      - name: deal_reg_comments
+        description: Free-text deal registration comments.
+
+      - name: deal_registration_extension_approval
+        description: Extension approval status.
+
+      - name: deal_registration_name
+        description: Deal-registration record name.
+
+      - name: dealreg_extension_partner_justification
+        description: Partner justification for registration extension.
+
+      - name: denied_party_screening_status
+        description: Denied-party screening status.
+
+      - name: lead_owner_email
+        description: Lead-owner email.
+
+      - name: infoblox_contact_mailto
+        description: Mailto-formatted Infoblox contact value.
+
+      - name: partner_support_comments
+        description: Partner-support comments.
+
+      - name: products_of_interest
+        description: Products associated with the registered deal.
+
+      - name: project_driver
+        description: Business/project driver.
+
+      - name: reseller_company_name
+        description: Reseller company name.
+
+      - name: reseller_sales_rep_name
+        description: Reseller sales representative name.
+
+      - name: resubmission_comments
+        description: Comments entered when the registration was resubmitted.
+
+      - name: value_adds
+        description: Partner value-add information.
+
+      - name: approved_date
+        description: Timestamp when the registration was approved.
+
+      - name: created_date
+        description: Timestamp when the registration was created.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: expected_close_date
+        description: Expected or actual deal close date.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: legacy_dr_expected_close_date_lower_bound
+              expression: >
+                expected_close_date IS NULL
+                OR cast(expected_close_date AS DATE) >= DATE '2015-01-01'
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: expiration_date
+        description: Registration expiration timestamp.
+
+      - name: last_activity_date
+        description: Most recent Salesforce activity date.
+
+      - name: last_modified_date
+        description: Timestamp when the registration was last modified.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: last_referenced_date
+        description: Salesforce last-referenced timestamp.
+
+      - name: last_viewed_date
+        description: Salesforce last-viewed timestamp.
+
+      - name: system_mod_stamp
+        description: Salesforce system modification timestamp.
+
+      - name: edp_updated_at
+        description: Timestamp when dbt materialised this record.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]

@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: dim_user
+    description: "Gold dimension for Salesforce Users with manager chain (up to 7 levels),
+      role and profile lookups, and is_infoblox_employee domain flag.
+      Used as a lookup dimension across multiple gold models
+      (dim_opportunity, dim_deal_registration, dim_vartopia_deal_registration)."
+    config:
+      tags: ["gold", "common", "salesforce", "dimension"]
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      source_systems: "Salesforce CRM (bronze_salesforce.user)"
+      refresh_cadence: "Daily"
+      # Note: was defined twice in the original schema.yml — merged here.
+      # The fuller definition (with is_active, manager_chain_depth, edp_updated_at)
+      # takes precedence.
+
+    columns:
+      - name: user_id
+        description: "Salesforce User ID. Primary key."
+        tests:
+          - not_null
+          - unique
+
+      - name: user_name
+        description: "Resolved display name.
+          INITCAP(first_name) + INITCAP(last_name) when both present;
+          falls back to INITCAP(name)."
+
+      - name: is_infoblox_employee
+        description: "TRUE when the user's email domain is @infoblox.com.
+          Computed by the is_internal_domain macro."
+        tests:
+          - not_null
+
+      - name: is_active
+        description: "TRUE if the Salesforce user account is currently active."
+
+      - name: manager_chain_depth
+        description: "Number of manager levels above this user in the hierarchy.
+          0 = no manager. Maximum 7 levels resolved."
+
+      - name: edp_updated_at
+        description: "Timestamp when this record was last written by dbt."
+        tests:
+          - not_null

@@ -1,0 +1,455 @@
+version: 1
+
+models:
+  - name: dim_vartopia_deal_registration
+    description: >
+      Gold Common dimension for Vartopia deal registrations sourced from
+      stg_vartopia_deal_registration. Deleted records are excluded and records are
+      deduplicated using vartopia_sf_registration_id where available, otherwise
+      partner_account_id + opportunity_id + expected_close_date.
+      One physical row is published per retained Vartopia registration.
+
+    config:
+      tags: ["gold", "common", "vartopia", "deal_registration"]
+
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      source_systems: >
+        Vartopia managed package
+        (salesforce_vartopiadrs__registration__c)
+      refresh_cadence: "Daily"
+
+    tests:
+
+      - dbt_utils.expression_is_true:
+          name: vartopia_dr_migration_flags_are_inverse
+          expression: >
+            migrated_to_vartopia != is_native_vartopia_registration
+          config:
+            severity: error
+            tags: ["dq", "consistency", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: vartopia_dr_created_before_last_modified
+          expression: >
+            created_date IS NULL
+            OR last_modified_date IS NULL
+            OR created_date <= last_modified_date
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+      # Protect the model's actual deduplication grain.
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - vartopia_sf_registration_id
+          name: vartopia_sf_registration_id_unique_when_populated
+          config:
+            where: "vartopia_sf_registration_id IS NOT NULL AND trim(vartopia_sf_registration_id) <> ''"
+            severity: error
+            tags: ["dq", "uniqueness", "dq_blocking"]
+
+    columns:
+
+      - name: vartopia_registration_id
+        description: >
+          Salesforce record ID for the retained Vartopia registration.
+          Physical primary key of this model.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+          - unique:
+              config:
+                severity: error
+                tags: ["dq", "uniqueness", "dq_blocking"]
+
+          - dbt_utils.expression_is_true:
+              name: vartopia_registration_id_valid_sfdc_length
+              expression: >
+                length(trim(vartopia_registration_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: am_vartopia_record_id
+        description: Vartopia AM record identifier.
+
+      - name: child_registration_id
+        description: Child Vartopia registration identifier where present.
+
+      - name: created_by_id
+        description: Salesforce User ID of the user who created the registration.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: customer_account_id
+        description: Salesforce Account ID for the end customer.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: customer_account_owner_id
+        description: Salesforce User ID of the customer-account owner.
+
+      - name: customer_contact_id
+        description: Salesforce Contact ID of the customer contact.
+
+      - name: distributor_account_id
+        description: Salesforce Account ID of the distributor.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: distributor_contact_id
+        description: Salesforce Contact ID associated with the distributor.
+
+      - name: lead_id
+        description: Salesforce Lead ID associated with the registration.
+
+      - name: mdf_campaign_id
+        description: MDF campaign identifier.
+
+      - name: opportunity_id
+        description: Salesforce Opportunity ID associated with the registration.
+        tests:
+          - relationships:
+              to: ref('dim_opportunity')
+              field: opportunity_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+          - dbt_utils.expression_is_true:
+              name: vartopia_dr_opportunity_id_valid_sfdc_length
+              expression: >
+                opportunity_id IS NULL
+                OR length(trim(opportunity_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: opportunity_owner_id
+        description: Salesforce User ID of the opportunity owner.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: partner_account_id
+        description: Salesforce Account ID of the reseller/partner.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: partner_manager_2_id
+        description: Partner-manager identifier.
+
+      - name: primary_registration_id
+        description: Primary Vartopia registration identifier.
+
+      - name: prospect_contact_id
+        description: Prospect Salesforce Contact ID.
+
+      - name: sales_rep_id
+        description: Sales representative identifier.
+
+      - name: vartopia_sf_registration_id
+        description: >
+          Vartopia system registration identifier used as the preferred
+          deduplication key when populated.
+
+      - name: vendor_approval_id
+        description: Vendor approval identifier.
+
+      - name: migrated_to_vartopia
+        description: >
+          TRUE when this registration corresponds to a migrated legacy deal
+          registration; FALSE for a native Vartopia registration.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: is_native_vartopia_registration
+        description: >
+          Logical inverse of migrated_to_vartopia.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: is_approved_by_vartopia
+        description: Vartopia approval indicator.
+
+      - name: is_clone
+        description: TRUE if this registration is a clone.
+
+      - name: is_created_by_auto_reg
+        description: TRUE if created through automatic registration.
+
+      - name: is_created_from_mvs
+        description: Source-system creation indicator.
+
+      - name: is_created_from_registration
+        description: Indicates creation from another registration.
+
+      - name: is_ez_update_eligible
+        description: EZ-update eligibility indicator.
+
+      - name: is_registration_extended
+        description: TRUE if the registration has been extended.
+
+      - name: is_registration_sent_to_vartopia
+        description: Indicates registration was sent to Vartopia.
+
+      - name: is_send_update_request
+        description: Update-request indicator.
+
+      - name: is_sent_to_vartopia
+        description: Indicates record was sent to Vartopia.
+
+      - name: is_sync_with_vartopia
+        description: Indicates synchronisation with Vartopia.
+
+      - name: registration_status
+        description: Unified registration status sourced from vendor_status.
+
+      - name: deal_registration_type
+        description: Unified deal-registration type sourced from true_source.
+
+      - name: active_customer_registrations
+        description: Active customer registration count.
+
+      - name: am_campaign_id
+        description: AM campaign identifier.
+
+      - name: am_incentive_amount
+        description: AM incentive amount.
+
+      - name: am_incentive_type
+        description: AM incentive type.
+
+      - name: am_program_name
+        description: AM programme name.
+
+      - name: am_vendor_unique_id
+        description: AM vendor unique identifier.
+
+      - name: approved_regs_count
+        description: Approved registration count.
+
+      - name: approved_regs_partner_rep_count
+        description: Approved registration count for partner representative.
+
+      - name: business_justification
+        description: Business justification text.
+
+      - name: closed_won_partner_rep_count
+        description: Closed-won count for partner representative.
+
+      - name: closed_won_regs_count
+        description: Closed-won registration count.
+
+      - name: comments
+        description: Vartopia comments.
+
+      - name: contact_geo
+        description: Contact geography.
+
+      - name: customer_address_line2
+        description: Second customer-address line.
+
+      - name: customer_name
+        description: End-customer name.
+
+      - name: days_since_approval
+        description: Days elapsed since approval.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: vartopia_dr_days_since_approval_non_negative
+              expression: >
+                days_since_approval IS NULL
+                OR days_since_approval >= 0
+              config:
+                severity: warn
+                tags: ["dq", "accuracy", "dq_monthly"]
+
+      - name: days_to_approve
+        description: Number of days required for approval.
+
+      - name: days_to_denied
+        description: Number of days until denial.
+
+      - name: days_to_progress
+        description: Number of days until progression.
+
+      - name: deal_name
+        description: Vartopia deal name.
+
+      - name: deal_registration_name
+        description: Deal registration name.
+
+      - name: default_account_source
+        description: Default account-source value.
+
+      - name: default_account_type
+        description: Default account type.
+
+      - name: default_opp_stage
+        description: Default opportunity stage.
+
+      - name: denial_reason
+        description: Reason the registration was denied.
+
+      - name: error_message
+        description: Vartopia processing/error message.
+
+      - name: extension_status
+        description: Deal-registration extension status.
+
+      - name: internal_notes
+        description: Internal Vartopia notes.
+
+      - name: lead_source
+        description: Lead source.
+
+      - name: legacy_dr_id
+        description: Associated legacy deal-registration identifier.
+
+      - name: no_of_attempts
+        description: Number of processing attempts.
+
+      - name: opportunity_amount
+        description: Opportunity amount.
+
+      - name: opportunity_stage_name
+        description: Opportunity stage name.
+
+      - name: partner_notes
+        description: Partner notes.
+
+      - name: partner_status
+        description: Partner status.
+
+      - name: program_name
+        description: Programme name.
+
+      - name: reg_days_since_submitted
+        description: Days since registration submission.
+
+      - name: registration_lot_number
+        description: Registration lot number.
+
+      - name: registration_url
+        description: Registration URL.
+
+      - name: request_sent_count
+        description: Number of update requests sent.
+
+      - name: solution_name
+        description: Solution name.
+
+      - name: submitter_type
+        description: Submitter type.
+
+      - name: updates_received_from_partner
+        description: Number/indicator of updates received from partner.
+
+      - name: approved_date
+        description: Timestamp when the registration was approved.
+
+      - name: created_date
+        description: Timestamp when the registration was created.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: current_date_time
+        description: Source current-date/time field.
+
+      - name: expected_close_date
+        description: Expected or actual close date.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: vartopia_dr_expected_close_date_lower_bound
+              expression: >
+                expected_close_date IS NULL
+                OR cast(expected_close_date AS DATE) >= DATE '2015-01-01'
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: expiration_date
+        description: Registration expiration timestamp.
+
+      - name: last_modified_date
+        description: Timestamp when the registration was last modified.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: last_referenced_date
+        description: Salesforce last-referenced timestamp.
+
+      - name: last_request_for_update
+        description: Timestamp of the last update request.
+
+      - name: last_update_provided_by_partner
+        description: Timestamp of the last update provided by the partner.
+
+      - name: last_updated_for_vartopia
+        description: Timestamp when the record was last updated for Vartopia.
+
+      - name: last_viewed_date
+        description: Salesforce last-viewed timestamp.
+
+      - name: next_update_auto_request_date
+        description: Next automatic update-request timestamp.
+
+      - name: reg_auto_sync_time
+        description: Automatic registration-sync timestamp.
+
+      - name: reg_denied_date
+        description: Timestamp when the registration was denied.
+
+      - name: time_to_approve
+        description: Time-to-approval measure.
+
+      - name: edp_updated_at
+        description: Timestamp when dbt materialised this record.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]

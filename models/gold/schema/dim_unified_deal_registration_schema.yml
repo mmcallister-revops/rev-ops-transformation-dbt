@@ -1,0 +1,372 @@
+version: 1
+
+models:
+  - name: dim_unified_deal_registration
+    description: >
+      Unified Gold Common dimension combining legacy Salesforce and Vartopia
+      deal registrations. Grain is one row per source_system + registration_id.
+      source_system distinguishes LEGACY and VARTOPIA records.
+
+    config:
+      tags: ["gold", "common", "deal_registration", "unified"]
+
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      data_sensitivity: "Confidential"
+      contains_pii: true
+      pii_fields: >
+        customer_name, deal_registration_name
+      source_systems: >
+        Salesforce CRM (deal_registration__c);
+        Vartopia managed package (salesforce_vartopiadrs__registration__c)
+      refresh_cadence: "Daily"
+
+    tests:
+
+      # Declared composite grain.
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - source_system
+            - registration_id
+          name: unified_dr_unique_source_and_registration
+          config:
+            severity: error
+            tags: ["dq", "uniqueness", "dq_blocking"]
+
+      # Exact row-count reconciliation is valid here because this model is
+      # a UNION ALL of the two complete source-specific Gold models.
+      - dbt_utils.expression_is_true:
+          name: unified_dr_rowcount_equals_sum_of_sources
+          expression: >
+            (SELECT COUNT(*) FROM {{ ref('dim_unified_deal_registration') }})
+            =
+            (SELECT COUNT(*) FROM {{ ref('dim_deal_registration') }})
+            +
+            (SELECT COUNT(*) FROM {{ ref('dim_vartopia_deal_registration') }})
+          config:
+            severity: warn
+            tags: ["dq", "reconciliation", "dq_monitoring"]
+
+      - accepted_values:
+          name: unified_dr_source_system_valid_values
+          column_name: source_system
+          values: ["LEGACY", "VARTOPIA"]
+          config:
+            severity: error
+            tags: ["dq", "validity", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_migrated_flag_required_for_vartopia
+          expression: >
+            source_system = 'LEGACY'
+            OR migrated_to_vartopia IS NOT NULL
+          config:
+            severity: error
+            tags: ["dq", "completeness", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_native_flag_required_for_vartopia
+          expression: >
+            source_system = 'LEGACY'
+            OR is_native_vartopia_registration IS NOT NULL
+          config:
+            severity: error
+            tags: ["dq", "completeness", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_vartopia_flags_null_on_legacy
+          expression: >
+            source_system = 'VARTOPIA'
+            OR (
+              migrated_to_vartopia IS NULL
+              AND is_native_vartopia_registration IS NULL
+            )
+          config:
+            severity: error
+            tags: ["dq", "validity", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_vartopia_flags_are_inverse
+          expression: >
+            source_system = 'LEGACY'
+            OR migrated_to_vartopia != is_native_vartopia_registration
+          config:
+            severity: error
+            tags: ["dq", "consistency", "dq_blocking"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_denial_reason_only_on_declined_records
+          expression: >
+            denial_reason IS NULL
+            OR registration_status IN (
+              'Denied', 'Rejected', 'Declined', 'Deny', 'Reject'
+            )
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+      - dbt_utils.expression_is_true:
+          name: unified_dr_created_before_last_modified
+          expression: >
+            created_date IS NULL
+            OR last_modified_date IS NULL
+            OR created_date <= last_modified_date
+          config:
+            severity: warn
+            tags: ["dq", "consistency", "dq_monitoring"]
+
+    columns:
+
+      - name: source_system
+        description: >
+          Originating registration source. LEGACY identifies the legacy
+          Salesforce deal-registration object; VARTOPIA identifies the
+          Vartopia managed-package registration object.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: registration_id
+        description: >
+          Source-system registration identifier. Together with source_system,
+          defines the grain of this model.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+          - dbt_utils.expression_is_true:
+              name: unified_dr_registration_id_valid_sfdc_length
+              expression: >
+                length(trim(registration_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: migrated_to_vartopia
+        description: >
+          VARTOPIA rows only. TRUE for migrated legacy registrations and FALSE
+          for native Vartopia registrations. NULL for LEGACY rows.
+
+      - name: is_native_vartopia_registration
+        description: >
+          VARTOPIA rows only. Logical inverse of migrated_to_vartopia.
+          NULL for LEGACY rows.
+
+      - name: created_by_id
+        description: Salesforce User ID of the creator.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: distributor_account_id
+        description: Salesforce Account ID of the distributor.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: opportunity_id
+        description: Salesforce Opportunity ID where present.
+        tests:
+          - relationships:
+              to: ref('dim_opportunity')
+              field: opportunity_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+          - dbt_utils.expression_is_true:
+              name: unified_dr_opportunity_id_valid_sfdc_length
+              expression: >
+                opportunity_id IS NULL
+                OR length(trim(opportunity_id)) in (15, 18)
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: opportunity_owner_id
+        description: >
+          Opportunity-owner Salesforce User ID on VARTOPIA rows. NULL on LEGACY rows.
+        tests:
+          - relationships:
+              to: ref('dim_user')
+              field: user_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: partner_account_id
+        description: Salesforce Account ID of the reseller/partner.
+        tests:
+          - relationships:
+              to: ref('dim_account')
+              field: account_id
+              config:
+                severity: warn
+                tags: ["dq", "referential_integrity", "dq_monitoring"]
+
+      - name: partner_sales_rep_id
+        description: >
+          Partner sales-representative ID on LEGACY rows. NULL on VARTOPIA rows.
+
+      - name: distributor_account_name
+        description: Resolved distributor account name.
+
+      - name: opportunity_owner_name
+        description: Resolved opportunity owner name.
+
+      - name: partner_account_name
+        description: Resolved partner account name.
+
+      - name: is_clone
+        description: TRUE if the registration is a clone.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: is_deleted
+        description: >
+          Audit flag retained from the source-specific Gold models.
+          Both upstream models filter deleted records, therefore this must
+          always be FALSE.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+          - accepted_values:
+              values: [false]
+              name: unified_dr_is_deleted_always_false
+              config:
+                severity: error
+                tags: ["dq", "validity", "dq_blocking"]
+
+      - name: add_teaming_partner
+        description: LEGACY-only teaming-partner indicator.
+
+      - name: eligible_for_resubmission
+        description: LEGACY-only resubmission eligibility indicator.
+
+      - name: is_resubmitted
+        description: LEGACY-only resubmission indicator.
+
+      - name: approved_date
+        description: Approval timestamp.
+
+      - name: created_date
+        description: Creation timestamp.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: days_since_approval
+        description: Days elapsed since approval.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: unified_dr_days_since_approval_non_negative
+              expression: >
+                days_since_approval IS NULL
+                OR days_since_approval >= 0
+              config:
+                severity: warn
+                tags: ["dq", "accuracy", "dq_monthly"]
+
+      - name: deal_registration_name
+        description: Deal-registration name/title.
+
+      - name: denial_reason
+        description: Unified reason for denial/rejection.
+
+      - name: expected_close_date
+        description: Expected or actual deal close date.
+        tests:
+          - dbt_utils.expression_is_true:
+              name: unified_dr_expected_close_date_lower_bound
+              expression: >
+                expected_close_date IS NULL
+                OR cast(expected_close_date AS DATE) >= DATE '2015-01-01'
+              config:
+                severity: warn
+                tags: ["dq", "validity", "dq_monthly"]
+
+      - name: expiration_date
+        description: Registration expiration timestamp.
+
+      - name: last_modified_date
+        description: Source last-modified timestamp.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]
+
+      - name: deal_registration_type
+        description: >
+          Unified deal-registration type. Value vocabularies differ between
+          LEGACY and VARTOPIA and therefore require business approval before
+          an accepted_values test is introduced.
+
+      - name: registration_status
+        description: >
+          Unified registration-status field. Value vocabularies differ between
+          LEGACY and VARTOPIA and therefore require business approval before
+          an accepted_values test is introduced.
+
+      - name: company
+        description: LEGACY-only company value.
+
+      - name: deal_reg_comments
+        description: LEGACY-only deal-registration comments.
+
+      - name: partner_support_comments
+        description: LEGACY-only partner-support comments.
+
+      - name: products_of_interest
+        description: LEGACY-only products-of-interest field.
+
+      - name: comments
+        description: VARTOPIA-only comments.
+
+      - name: customer_name
+        description: VARTOPIA-only end-customer name.
+
+      - name: deal_name
+        description: VARTOPIA-only deal name.
+
+      - name: internal_notes
+        description: VARTOPIA-only internal notes.
+
+      - name: is_registration_extended
+        description: VARTOPIA-only extension indicator.
+
+      - name: last_updated_for_vartopia
+        description: VARTOPIA synchronization timestamp.
+
+      - name: reg_denied_date
+        description: VARTOPIA denial timestamp.
+
+      - name: edp_updated_at
+        description: Timestamp when the upstream Gold row was materialised.
+        tests:
+          - not_null:
+              config:
+                severity: error
+                tags: ["dq", "completeness", "dq_blocking"]

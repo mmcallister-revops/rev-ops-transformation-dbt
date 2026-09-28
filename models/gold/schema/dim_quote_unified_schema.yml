@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: dim_quote_unified
+    description: "Gold dimension for quote headers, unioning RCA (legacy) and
+      CPQ (Salesforce CPQ) sources. One row per quote per source system."
+    config:
+      tags: ["gold", "common", "salesforce", "quote", "unified"]
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      source_systems: >
+        Salesforce CRM (bronze_salesforce.quote — RCA legacy);
+        Salesforce CPQ (bronze_salesforce.sbqq__quote__c)
+      refresh_cadence: "Daily"
+
+    columns:
+      - name: quote_unified_sk
+        description: "Surrogate key on source_system + quote_id."
+        tests:
+          - not_null
+          - unique
+
+      - name: quote_id
+        description: "Quote ID from the source system."
+        tests:
+          - not_null
+
+      - name: source_system
+        description: "RCA (legacy quote system) or CPQ (Salesforce CPQ)."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["RCA", "CPQ"]
+
+  - name: fct_quote_unified
+    description: "Gold fact for quote-level financials, unioning RCA (legacy) and
+      CPQ (Salesforce CPQ) sources. One row per quote per source system.
+      ACV and renewal metrics included."
+    config:
+      tags: ["gold", "common", "salesforce", "quote", "unified"]
+    meta:
+      # owner: "To be confirmed - DGC"
+      # steward: "To be confirmed - DGC"
+      # domain: "Sales"
+      source_systems: >
+        Salesforce CRM (bronze_salesforce.quote — RCA legacy);
+        Salesforce CPQ (bronze_salesforce.sbqq__quote__c)
+      refresh_cadence: "Daily"
+
+    columns:
+      - name: quote_unified_sk
+        description: "Surrogate key on source_system + quote_id."
+        tests:
+          - not_null
+          - unique
+
+      - name: source_system
+        description: "RCA (legacy quote system) or CPQ (Salesforce CPQ)."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["RCA", "CPQ"]
